@@ -1,0 +1,133 @@
+services:
+  # ==================== PostgreSQL (источник + DWH) ====================
+  postgres:
+    image: postgres:16
+    container_name: postgres-bigdata
+    command: ["postgres", "-p", "5555"]
+    environment:
+      POSTGRES_USER: student
+      POSTGRES_PASSWORD: student
+      POSTGRES_DB: lab3
+    ports:
+      - "5555:5555"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./исходные данные:/csv:ro
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U student -d lab3 -p 5555"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==================== Zookeeper (для Kafka) ====================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - bigdata-net
+
+  # ==================== Kafka ====================
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    networks:
+      - bigdata-net
+
+  # ==================== Apache Flink ====================
+  jobmanager:
+    image: flink:1.18.1-java17
+    container_name: flink-jobmanager
+    ports:
+      - "8081:8081" # Flink web UI
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager
+    command: jobmanager
+    networks:
+      - bigdata-net
+
+  taskmanager:
+    image: flink:1.18.1-java17
+    container_name: flink-taskmanager
+    depends_on:
+      - jobmanager
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager
+    command: taskmanager
+    networks:
+      - bigdata-net
+
+  # ==================== Data Proxy Service ====================
+  data-proxy-service:
+    build:
+      context: ./data-proxy-service
+    container_name: data-proxy-service
+    depends_on:
+      - postgres
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5555/lab3
+      SPRING_DATASOURCE_USERNAME: student
+      SPRING_DATASOURCE_PASSWORD: student
+      APP_KAFKA_LOG_EVERY_N_MESSAGES: 500
+      LOGGING_LEVEL_ORG_HOMEWORK_DATAPROXYSERVICE: INFO
+    networks:
+      - bigdata-net
+
+  # ==================== Flink streaming job ====================
+  flink-module:
+    build:
+      context: ./flink-module
+    container_name: flink-module
+    depends_on:
+      - jobmanager
+      - taskmanager
+      - postgres
+      - kafka
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: mock-data
+      KAFKA_GROUP_ID: flink-lab3-consumer
+      JDBC_URL: jdbc:postgresql://postgres:5555/lab3
+      JDBC_USER: student
+      JDBC_PASSWORD: student
+      FLINK_PARALLELISM: 1
+      FLINK_CHECKPOINT_INTERVAL_MS: 15000
+      JDBC_BATCH_SIZE: 25
+      JDBC_BATCH_INTERVAL_MS: 1000
+      FLINK_LOG_EVERY_N_MESSAGES: 500
+      FLINK_LOG_PREVIEW_LENGTH: 220
+      FLINK_JOBMANAGER_TARGET: jobmanager:8081
+      FLINK_JOB_NAME: lab3-kafka-to-postgres-snowflake
+      FLINK_JOB_JAR: /opt/flink/usrlib/flink-module.jar
+    restart: unless-stopped
+    networks:
+      - bigdata-net
+
+volumes:
+  pgdata:
+networks:
+  bigdata-net:
+    driver: bridge

@@ -35,3 +35,44 @@
 2. Файл docker-compose.yml с установкой PostgreSQL, Flink, Kafka и запуском приложения, которое из файлов mock_data(*).csv создает сообщения json в Kafka.
 3. Инструкция, как запускать Flink-джобу и приложение для отправки данных в Kafka для проверки лабораторной работы.
 4. Код Apache Flink для трансформации данных в режиме streaming.
+
+## Реализовано в проекте
+
+1. `data-proxy-service` читает таблицу `mock_data` из PostgreSQL и отправляет каждую строку как JSON в Kafka-топик.
+2. `flink-module` реализован как standalone Flink job, который:
+	- читает поток JSON из Kafka,
+	- валидирует JSON,
+	- трансформирует данные в схему снежинки,
+	- пишет в PostgreSQL
+3. В `docker-compose.yml` добавлен сервис `flink-module` с автозапуском Flink-джобы.
+
+## Как запустить
+
+1. Поднять инфраструктуру и сервисы:
+
+```bash
+docker compose up -d --build
+```
+
+2. Отправить данные из `mock_data` в Kafka:
+
+```bash
+curl -X POST http://localhost:8080/generate-data
+```
+
+3. Подождать
+  
+4. Проверить загрузку в PostgreSQL (запросом или через dbeaver):
+```sql
+SELECT COUNT(*) FROM dim_customer;
+SELECT COUNT(*) FROM dim_product;
+SELECT COUNT(*) FROM dim_store;
+SELECT COUNT(*) FROM dim_supplier;
+SELECT COUNT(*) FROM fact_sales;
+```
+
+Параметры подключения к бд: порт 5555, имя базы данных `lab3`, пользователь `student`, пароль `student`.
+
+5. Проверка идемпотентности:
+	- повторно выполнить `POST /generate-data`,
+	- убедиться, что в `fact_sales` не появляются дубликаты по бизнес-ключу.
