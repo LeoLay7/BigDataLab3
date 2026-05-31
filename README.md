@@ -42,7 +42,7 @@
 2. `flink-module` реализован как standalone Flink job, который:
 	- читает поток JSON из Kafka,
 	- валидирует JSON,
-	- трансформирует данные в схему снежинки,
+	- трансформирует данны,
 	- пишет в PostgreSQL
 3. В `docker-compose.yml` добавлен сервис `flink-module` с автозапуском Flink-джобы.
 
